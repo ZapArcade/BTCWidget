@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BTC • OmarchyTV</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --card: #161a22;
+      --border: #2a2f3a;
+      --text: #e6e8ee;
+      --muted: #8b93a7;
+      --green: #00c853;
+      --red: #ff5252;
+      --orange: #f7931a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "CaskaydiaMono", "Cascadia Code", "JetBrains Mono", monospace;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .widget {
+      background: var(--card);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .logo {
+      width: 32px; height: 32px;
+      background: var(--orange);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 16px; color: #000;
+    }
+    .title { font-size: 14px; font-weight: 600; letter-spacing: 0.3px; }
+    .subtitle { font-size: 11px; color: var(--muted); margin-top: 1px; }
+    .price {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 4px;
+    }
+    .change {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+    .change.positive { color: var(--green); }
+    .change.negative { color: var(--red); }
+    canvas {
+      width: 100%;
+      height: 80px;
+      display: block;
+      margin-bottom: 12px;
+    }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+    }
+    .loading { opacity: 0.55; }
+  </style>
+</head>
+<body>
+  <div class="widget" id="widget">
+    <div class="header">
+      <div class="logo">₿</div>
+      <div>
+        <div class="title">Bitcoin</div>
+        <div class="subtitle">BTC / USD • 24h</div>
+      </div>
+    </div>
+
+    <div class="price" id="price">—</div>
+    <div class="change" id="change">—</div>
+
+    <canvas id="spark" width="400" height="80"></canvas>
+
+    <div class="footer">
+      <span id="updated">Updating…</span>
+      <span>Live</span>
+    </div>
+  </div>
+
+  <script>
+    const priceEl   = document.getElementById('price');
+    const changeEl  = document.getElementById('change');
+    const updatedEl = document.getElementById('updated');
+    const widget    = document.getElementById('widget');
+    const canvas    = document.getElementById('spark');
+    const ctx       = canvas.getContext('2d');
+
+    function drawSparkline(prices) {
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      if (!prices || prices.length < 2) return;
+
+      const min = Math.min(...prices);
+      const max = Math.max(...prices);
+      const range = max - min || 1;
+
+      ctx.beginPath();
+      prices.forEach((p, i) => {
+        const x = (i / (prices.length - 1)) * w;
+        const y = h - ((p - min) / range) * (h - 8) - 4;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+
+      const last = prices[prices.length - 1];
+      const first = prices[0];
+      const isUp = last >= first;
+
+      ctx.strokeStyle = isUp ? '#00c853' : '#ff5252';
+      ctx.lineWidth = 2.5;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+
+      // subtle fill
+      ctx.lineTo(w, h);
+      ctx.lineTo(0, h);
+      ctx.closePath();
+      ctx.fillStyle = isUp ? 'rgba(0,200,83,0.08)' : 'rgba(255,82,82,0.08)';
+      ctx.fill();
+    }
+
+    async function update() {
+      try {
+        widget.classList.add('loading');
+
+        // Current price + 24h change
+        const tickerRes = await fetch('https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT');
+        const ticker = await tickerRes.json();
+
+        const price = parseFloat(ticker.lastPrice);
+        const changePct = parseFloat(ticker.priceChangePercent);
+
+        priceEl.textContent = '$' + price.toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        });
+
+        const sign = changePct >= 0 ? '+' : '';
+        changeEl.textContent = `${sign}${changePct.toFixed(2)}% (24h)`;
+        changeEl.className = 'change ' + (changePct >= 0 ? 'positive' : 'negative');
+
+        // 24h sparkline (1h candles)
+        const klineRes = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=24');
+        const klines = await klineRes.json();
+        const closes = klines.map(k => parseFloat(k[4])); // close price
+        drawSparkline(closes);
+
+        updatedEl.textContent = 'Updated ' + new Date().toLocaleTimeString();
+      } catch (err) {
+        priceEl.textContent = 'Error';
+        changeEl.textContent = 'Fetch failed';
+        updatedEl.textContent = 'Retrying…';
+        console.error(err);
+      } finally {
+        widget.classList.remove('loading');
+      }
+    }
+
+    update();
+    setInterval(update, 30000); // refresh every 30s
+  </script>
+</body>
+</html>
